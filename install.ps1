@@ -7,7 +7,7 @@ $localpath = $localpath = (Get-Module -Name PatronBase).ModuleBase
 
 if ($null -eq $localpath)
 {
-	$localpath = "$HOME\Documents\WindowsPowerShell\Modules\PatronBase"	
+	$localpath = "C:\Program Files\WindowsPowerShell\Modules\PatronBase"	
 }
 
 try
