@@ -85,7 +85,7 @@ Function Update-PBDatabase {
                     Write-Log -Path $logfile -Message "Backing up database $($dbname)..."
                 }
 
-                Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 300"
+                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 300"
 
                 foreach( $script in $scripts.script) {
                     Try {
@@ -166,7 +166,7 @@ Function Update-PBDatabase {
                     }
                 }
                 
-                Invoke-Sqlcmd2 -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 0"
+                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 0"
                 
 
             } Else {
