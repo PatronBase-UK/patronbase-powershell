@@ -5,6 +5,10 @@ Function Update-PBAppStack {
         ParameterSetName = "Named")] 
         [ValidateScript({$_ | Foreach-Object { "C:\PB-Releases\$_" } | Test-Path})]
         [string[]] $Stack,
+        [Parameter(Mandatory=$True,
+        ParameterSetName = "FolderPath")] 
+        [ValidateScript({Test-Path $_})]
+        [string] $FolderPath,
         [ValidateSet("stable","beta","patch","rc")]
         [string]$Build = "stable",
         [switch] $Force,
@@ -52,14 +56,19 @@ Function Update-PBAppStack {
         
         If ($PSBoundParameters.ContainsKey('Stack')) {
             $Stacks = $psboundparameters.Stack
-            }
+        }
 
         If ($PathPipeline.Length -gt 0) {
             $Stacks = $PathPipeline.name
-            }
+        }
 
+        If ($Stacks) {
+            $Paths = $Stacks | Foreach-Object { "C:\PB-Releases\$_" }
+        }
         
-        $Paths = $Stacks | Foreach-Object { "C:\PB-Releases\$_" }
+        If ($FolderPath) {
+            $Paths = $FolderPath
+        }
 
         
         Foreach ($Path in $Paths) {
