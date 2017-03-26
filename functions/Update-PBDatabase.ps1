@@ -7,7 +7,7 @@ Function Update-PBDatabase {
         [ValidateSet("stable","beta")]
         [string]$Stream = "stable",
         [switch] $SkipBackup,
-        [string] $BackupPath = "F:\AutoUpdate",
+        #[string] $BackupPath = "F:\AutoUpdate",
         [object] $ServerInstance = "PBUKSQLMAIN01",
         [switch] $Silent,
         [parameter(Mandatory=$True,
@@ -16,7 +16,9 @@ Function Update-PBDatabase {
 		[object]$DbPipeline
     )
     
-    BEGIN {}
+    BEGIN {
+        $BackupPath = (Connect-DbaSqlServer -SqlServer $ServerInstance).BackupDirectory
+    }
 
     PROCESS {
         
@@ -33,17 +35,18 @@ Function Update-PBDatabase {
         
         Foreach ($dbname in $Databases) {
 
+            $dbname = Get-SqlDatabase -ServerInstance $ServerInstance  -Name $dbname
             # Log file setup
             $dt = (Get-Date).ToString("yyyy-MM-dd HH-mm")
             $Stamp = (Get-Date).toString("yyyy-MM-dd HH:mm:ss")
             $uStamp = get-date -uformat %s
-            $logfile = "C:\PB-Support\Scripts\AutoUpdate\AutoUpdate - $($dbname) - $($dt).log"
+            $logfile = "C:\PB-Support\Scripts\AutoUpdate\AutoUpdate - $($dbname.Name) - $($dt).log"
 
 
-            [int] $currentAU = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "SELECT dbo.fn_getPropertyInt('AutoUpdate_LastVersion') CurrentAU" -SuppressProviderContextWarning).CurrentAU
-            $baseUrl = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_baseUrl') baseUrl" -SuppressProviderContextWarning).baseUrl
-            $auUsername = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_Username') username" -SuppressProviderContextWarning).username
-            $auPassword = ConvertTo-SecureString (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_Password') password" -SuppressProviderContextWarning).password -AsPlainText -Force
+            [int] $currentAU = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "SELECT dbo.fn_getPropertyInt('AutoUpdate_LastVersion') CurrentAU" -SuppressProviderContextWarning).CurrentAU
+            $baseUrl = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_baseUrl') baseUrl" -SuppressProviderContextWarning).baseUrl
+            $auUsername = (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_Username') username" -SuppressProviderContextWarning).username
+            $auPassword = ConvertTo-SecureString (Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "SELECT dbo.fn_getPropertyString('AutoUpdate_Password') password" -SuppressProviderContextWarning).password -AsPlainText -Force
             $auCred = New-Object Management.Automation.PSCredential ($auUsername, $auPassword)
 
             If ( $Stream -eq 'beta' ) {
@@ -80,34 +83,37 @@ Function Update-PBDatabase {
 
             If ( $newAU -gt $currentAU ) {
  
-                If ( -Not $SkipBackup) {
-                    Backup-SqlDatabase -ServerInstance $ServerInstance -Database $dbname -BackupAction Database -BackupFile "$($BackupPath)\AutoUpdate - $($dbname) - $($dt).bak"
-                    Write-Log -Path $logfile -Message "Backing up database $($dbname)..."
+                If ( -Not $SkipBackup -and $dbname.RecoveryModel -eq 'Simple') {
+                    Backup-SqlDatabase -ServerInstance $ServerInstance -Database $dbname.Name -BackupAction Database -BackupFile "$($BackupPath)\$($dbname.Name)\$($dbname.Name) - $($dt) - AutoUpdate.bak"
+                    Write-Log -Path $logfile -Message "Performing full backup of $($dbname.Name)..."
+                } Elseif ($dbname.RecoveryModel -ne 'Simple') {
+                    Backup-SqlDatabase -ServerInstance $ServerInstance -Database $dbname.Name -BackupAction Log -BackupFile "$($BackupPath)\$($dbname.Name)\$($dbname.Name) - $($dt) - AutoUpdate.trn" -BackupSetName "Pre-AutoUpdate"
+                    Write-Log -Path $logfile -Message "Performing transaction log backup of $($dbname.Name)..."
                 }
 
-                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 300"
+                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 300"
 
                 foreach( $script in $scripts.script) {
                     Try {
-                        Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -InputFile "C:\PB-Support\Scripts\AutoUpdate\$($script.Name).sql" -SuppressProviderContextWarning -AbortOnError -ErrorAction Stop
+                        Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -InputFile "C:\PB-Support\Scripts\AutoUpdate\$($script.Name).sql" -SuppressProviderContextWarning -AbortOnError -ErrorAction Stop
                         Write-Log -Path $logfile -Message "Applying $($script.Name)..."
                         $updateResult = $true
                     } Catch {
                         $ErrorMessage = $_.Exception.Message
                         Write-Log -Path $logfile -Message "Error applying $($script.Name) with $($ErrorMessage)"
             
-                        If ( -Not $skipBackup) {
-                            Write-Log -Path $logfile -Message "Restoring database $($dbname)..."
-                            Restore-SqlDatabase -ServerInstance $ServerInstance -Database $dbname -BackupFile "$($BackupPath)\AutoUpdate - $($dbname) - $($dt).bak" -ReplaceDatabase
+                        If ( -Not $skipBackup -and $dbname.RecoveryModel -eq 'Simple') {
+                            Write-Log -Path $logfile -Message "Restoring database $($dbname.Name)..."
+                            Restore-DbaDatabase -Path "$($BackupPath)\$($dbname.Name)" -SqlServer $ServerInstance -WithReplace
                         }
 
                         If ( -Not $Silent) {
                             Invoke-RestMethod -Uri https://hooks.slack.com/services/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 -Body "{	
                             `"attachments`": [
                                 {
-                                    `"fallback`": `"Database update failed on $($dbname)`",
+                                    `"fallback`": `"Database update failed on $($dbname.Name)`",
                                     `"color`": `"danger`",
-                                    `"pretext`": `"Database update failed on ``$($dbname)```",
+                                    `"pretext`": `"Database update failed on ``$($dbname.Name)```",
                                     `"fields`": [
                                         {
                                             `"title`": `"AutoUpdate Script`",
@@ -134,16 +140,16 @@ Function Update-PBDatabase {
     
                 If ($updateResult -eq $true ) {
 
-                    Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "UPDATE dbo.tblProperty SET intValue = $($newAU) WHERE propertyName = 'AutoUpdate_LastVersion'" -SuppressProviderContextWarning
+                    Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "UPDATE dbo.tblProperty SET intValue = $($newAU) WHERE propertyName = 'AutoUpdate_LastVersion'" -SuppressProviderContextWarning
                     Write-Log -Path $logfile -Message "Database updated to $($newAU)"
 
                     If ( -Not $Silent) {
                         Invoke-RestMethod -Uri https://hooks.slack.com/services/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 -Body "{	
                             `"attachments`": [
                                 {
-                                    `"fallback`": `"Database $($dbname) updated to $($newAU)`",
+                                    `"fallback`": `"Database $($dbname.Name) updated to $($newAU)`",
                                     `"color`": `"good`",
-                                    `"pretext`": `"Database ``$($dbname)`` updated`",
+                                    `"pretext`": `"Database ``$($dbname.Name)`` updated`",
                                     `"fields`": [
                                         {
                                             `"title`": `"Old DB Version`",
@@ -166,11 +172,11 @@ Function Update-PBDatabase {
                     }
                 }
                 
-                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 0"
+                Invoke-Sqlcmd -ServerInstance $ServerInstance -Database $dbname.Name -Query "EXEC dbo.up_au_flagUpdate @reconnectSeconds = 0"
                 
 
             } Else {
-                Write-Log -Path $logfile -Message "No updates available for $($dbname)"
+                Write-Log -Path $logfile -Message "No updates available for $($dbname.Name)"
             }
         }
     }
