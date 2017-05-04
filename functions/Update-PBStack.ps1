@@ -15,12 +15,10 @@ Function Update-PBStack {
     )
     
     BEGIN {
-        $pwd = ConvertTo-SecureString "patron" -AsPlainText -Force
-        $cred = New-Object Management.Automation.PSCredential ('pb', $pwd)
 
         $buildpath = "C:\PB-Support\Updates\$($Build)"
         If(!(test-path "$($buildpath)\_zips")) {
-            New-Item -ItemType Directory -Force -Path $path | Out-Null
+            $newdir = New-Item -ItemType Directory -Force -Path "$($buildpath)\_zips"
         }
 
         If ($Stack) {
@@ -31,27 +29,35 @@ Function Update-PBStack {
         $modules = Get-ChildItem $FolderPath -Directory
 
         workflow pbbuildfetch {
+            Param (
+                $wfmodules,
+                $wfBuild,
+                $wfbuildpath
+                )
 
-            foreach -parallel ($module in $modules ) {
+            $pwd = ConvertTo-SecureString "patron" -AsPlainText -Force
+            $cred = New-Object Management.Automation.PSCredential ('pb', $pwd)
+
+            foreach -parallel ($module in $wfmodules ) {
             
-            "Downloading $build/$module build from SettCloud..."
-                If ( $module -eq "Desktop" -and $build -eq "stable" ) {
-                    Invoke-Download -uri "http://pbbuild.settcloud.com/rc/$module.zip" -FilePath "$buildpath\_zips\$module.zip" -cred $cred
-                } ElseIf ( $module -eq "Desktop" -and $build -eq "patch" ) {
-                    Invoke-Download -uri "http://pbbuild.settcloud.com/beta/$module.zip" -FilePath "$buildpath\_zips\$module.zip" -cred $cred
+            "Downloading $wfbuild/$module build from SettCloud..."
+                If ( $module -eq "Desktop" -and $wfbuild -eq "stable" ) {
+                    Invoke-Download -uri "http://pbbuild.settcloud.com/rc/$module.zip" -FilePath "$wfbuildpath\_zips\$module.zip" -cred $cred
+                } ElseIf ( $module -eq "Desktop" -and $wfbuild -eq "patch" ) {
+                    Invoke-Download -uri "http://pbbuild.settcloud.com/beta/$module.zip" -FilePath "$wfbuildpath\_zips\$module.zip" -cred $cred
                 } Elseif ($module.name -like "Member*" ) {
-                    Invoke-Download -uri "http://pbbuild.settcloud.com/$build/Membership.zip" -FilePath "$buildpath\_zips\$module.zip" -cred $cred
+                    Invoke-Download -uri "http://pbbuild.settcloud.com/$wfbuild/Membership.zip" -FilePath "$wfbuildpath\_zips\$module.zip" -cred $cred
                 } Else {
-                    Invoke-Download -uri "http://pbbuild.settcloud.com/$build/$module.zip" -FilePath "$buildpath\_zips\$module.zip" -cred $cred
+                    Invoke-Download -uri "http://pbbuild.settcloud.com/$wfbuild/$module.zip" -FilePath "$wfbuildpath\_zips\$module.zip" -cred $cred
                 }
 
-                Unblock-File -Path "$buildpath\_zips\$module.zip"
+                Unblock-File -Path "$wfbuildpath\_zips\$module.zip"
 
-                New-Item -ItemType Directory -Force -Path "$($buildpath)\$module"
-                Expand-Archive -Path "$($buildpath)\_zips\$module.zip" -DestinationPath "$($buildpath)\$module" -Force
+                $newdir = New-Item -ItemType Directory -Force -Path "$($wfbuildpath)\$module"
+                Expand-Archive -Path "$($wfbuildpath)\_zips\$module.zip" -DestinationPath "$($wfbuildpath)\$module" -Force
             } #END foreach loop
         } #END workflow pbbuildfetch
-    pbbuildfetch
+    pbbuildfetch -wfmodules $modules -wfbuildpath $buildpath -wfBuild $Build
     } #END BEGIN
 
     PROCESS {
@@ -69,10 +75,10 @@ Function Update-PBStack {
 
                 If ( $module -eq "Desktop") {
                     "Updating $module..."
-                    xcopy /S /Y /Q "$($buildpath)\!All\$module\Release\*.*" "$($Path)\$module\"
+                    xcopy /S /Y /Q "$($buildpath)\$module\Release\*.*" "$($Path)\$module\"
                 } Else {
                     "Updating $module..."
-                    xcopy /S /Y /Q "$($buildpath)\!All\$module\*.*" "$($Path)\$module\"  
+                    xcopy /S /Y /Q "$($buildpath)\$module\*.*" "$($Path)\$module\"  
                 }
             } #END Foreach ($module in $modules)
 
@@ -80,8 +86,8 @@ Function Update-PBStack {
     } #END PROCESS
 
     END {
-        Get-ChildItem "$($buildpath)\!All" -Recurse -File | Remove-Item -Force
-        Get-ChildItem "$($buildpath)\!All" -Recurse -Directory | Remove-Item -Force -Recurse
+        Get-ChildItem $buildpath -Recurse -File -Exclude "*.zip"  | Remove-Item -Force
+        Get-ChildItem $buildpath -Recurse -Directory -Exclude "_zips" | Remove-Item -Force -Recurse
     } #END END
 
 } #END Function Update-PBStack
